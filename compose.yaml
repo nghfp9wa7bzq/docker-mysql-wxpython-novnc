@@ -1,0 +1,125 @@
+#    Copyright (C) 2024  nghfp9wa7bzq@gmail.com
+
+#    This program is free software: you can redistribute it and/or modify
+#    it under the terms of the GNU General Public License as published by
+#    the Free Software Foundation, either version 3 of the License, or
+#    (at your option) any later version.
+
+#    This program is distributed in the hope that it will be useful,
+#    but WITHOUT ANY WARRANTY; without even the implied warranty of
+#    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+#    GNU General Public License for more details.
+
+#    You should have received a copy of the GNU General Public License
+#    along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
+services:
+  db:
+    # We use a mariadb image which supports both amd64 & arm64 architecture
+    # image: mariadb:10-focal
+    # If you really want to use MySQL, uncomment the following line
+    # image: mysql:8
+    # NOTE: use of "mysql_native_password" is not recommended: https://dev.mysql.com/doc/refman/8.0/en/upgrading-from-previous-series.html#upgrade-caching-sha2-password
+    # (this is just an example, not intended to be a production configuration)
+
+    build:
+      context: db
+      target: db-runner
+      secrets:
+        - db-user-password
+      args:
+        - DB_USER_PASSWORD_FILE=/run/secrets/db-user-password
+        - DOCKER_USER_NAME=docker
+        - DOCKER_DB_NAME=sakila
+    command: '--default-authentication-plugin=mysql_native_password'
+    restart: always
+    healthcheck:
+      test: ['CMD-SHELL', 'mysqladmin ping -h 127.0.0.1 --password="$$(cat /run/secrets/db-root-password)" --silent']
+      interval: 3s
+      retries: 5
+      start_period: 30s
+    volumes:
+      - db-data:/var/lib/mysql
+    environment:
+      - MYSQL_ROOT_PASSWORD_FILE=/run/secrets/db-root-password
+    secrets:
+      - db-root-password
+    networks:
+      - backnet
+    expose:
+      - 3306
+      - 33060
+    # Use this for dev only!
+    ports:
+      - '3306:3306'
+
+  frontend:
+    build:
+      context: frontend
+      target: runner
+      secrets:
+        - vnc-password
+        - frontend-root-password
+        - frontend-user-password
+      args:
+        - VNC_PASSWD_FILE=/run/secrets/vnc-password
+        - DOCKER_ROOT_PASSWD_FILE=/run/secrets/frontend-root-password
+        - DOCKER_USER_UID=1000
+        - DOCKER_USER_NAME=docker
+        - DOCKER_USER_PASSWD_FILE=/run/secrets/frontend-user-password
+    shm_size: '256m'
+    restart: always
+    working_dir: /app
+    volumes:
+      - ./:/app
+      - /app/venv/
+      - /secrets/
+    environment:
+      - DB_USER_PASSWORD_FILE=/run/secrets/db-user-password
+#      - DOCKER_USER_UID=1000
+#      - DOCKER_USER_NAME=docker
+#      - DOCKER_USER_PASSWD_FILE=/run/secrets/frontend-user-password
+    secrets:
+      - db-user-password
+#      - vnc-password
+#      - frontend-user-password
+    networks:
+      - backnet
+    # expose vnc to localhost
+    ports:
+      - '5900:5900'
+      - '5901:5901'
+    depends_on:
+      db:
+        condition: service_healthy
+
+  adminer:
+    image: adminer
+    restart: always
+    ports:
+      - '8080:8080'
+    networks:
+      - backnet
+    depends_on:
+      db:
+        condition: service_healthy
+    profiles:
+      - debug
+
+volumes:
+  db-data:
+
+secrets:
+  db-root-password:
+    file: secrets/db_root_password.txt
+  db-user-password:
+    file: secrets/db_user_password.txt
+  vnc-password:
+    file: secrets/vnc_password.txt
+  frontend-root-password:
+    file: secrets/frontend_root_password.txt
+  frontend-user-password:
+    file: secrets/frontend_user_password.txt
+
+networks:
+  backnet:
